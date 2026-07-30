@@ -1,4 +1,4 @@
-## Unreleased
+## @opencoredev/sandbox-sdk@0.2.0
 
 - Add Ascii Box and Railway Sandbox provider adapters, package exports, capabilities, examples,
   live-test entry points, and provider documentation.
