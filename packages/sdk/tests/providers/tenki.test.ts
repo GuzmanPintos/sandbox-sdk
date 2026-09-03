@@ -129,10 +129,13 @@ class NativeSession {
         closeStdout = () => controller.close();
       },
     });
+    const lingeringStderr = argv.at(-1) === "linger";
     const stderr = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(encoder.encode("warn\n"));
-        closeStderr = () => controller.close();
+        closeStderr = () => {
+          if (!lingeringStderr) controller.close();
+        };
       },
     });
     let exited = false;
@@ -148,6 +151,7 @@ class NativeSession {
         stdinChunks.push(chunk);
         emitStdout(chunk);
         if (argv.at(-1) === "cat") exit(0);
+        if (argv.at(-1) === "cat2" && stdinChunks.length === 2) exit(0);
       },
     });
     return {
@@ -455,4 +459,42 @@ test("Tenki managed sessions pause, resume, and terminate", async () => {
   expect(waitResumed).toHaveBeenCalledTimes(1);
   await session.destroy();
   expect(closeIfOpen).toHaveBeenCalledTimes(1);
+});
+
+test("Tenki adapter serializes concurrent stdin writes on one writer", async () => {
+  reset();
+  const { tenki } = await import("../../src/providers/tenki");
+  const sandbox = await createSandbox({ provider: tenki() });
+  const process = await sandbox.processes.start({ command: "cat2" });
+  await Promise.all([process.write("one\n"), process.write("two\n")]);
+  expect(await process.wait()).toEqual({ exitCode: 0 });
+  const events: string[] = [];
+  for await (const event of process.output())
+    if (event.stream === "stdout") events.push(String(event.data));
+  expect(events).toEqual(["one\n", "two\n"]);
+  await sandbox.stop();
+});
+
+test("Tenki adapter reports exit even when a process pipe never closes", async () => {
+  reset();
+  const { tenki } = await import("../../src/providers/tenki");
+  const sandbox = await createSandbox({ provider: tenki() });
+  const process = await sandbox.processes.start({ command: "linger" });
+  const started = performance.now();
+  await process.kill();
+  expect(await process.wait()).toEqual({ exitCode: -1 });
+  expect(performance.now() - started).toBeLessThan(3_000);
+  expect(await process.status()).toBe("killed");
+  await sandbox.stop();
+});
+
+test("Tenki adapter rejects / as a working directory", async () => {
+  reset();
+  const { tenki } = await import("../../src/providers/tenki");
+  await expect(createSandbox({ provider: tenki(), cwd: "/" })).rejects.toMatchObject({
+    code: "invalid_input",
+    message: expect.stringContaining("cannot use / as the working directory"),
+  });
+  expect(closeIfOpen).toHaveBeenCalledTimes(1);
+  expect(execCalls).toHaveLength(0);
 });

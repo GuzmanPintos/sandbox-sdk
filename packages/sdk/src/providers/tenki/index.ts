@@ -26,6 +26,8 @@ import { tenkiCapabilities } from "../capabilities";
 
 /** Root of the guest file API. Paths outside it are rejected by the Tenki guest agent. */
 const GUEST_HOME = "/home/tenki";
+/** How long to keep draining stdout/stderr after the process exited before giving up on the pipes. */
+const OUTPUT_DRAIN_GRACE_MS = 1_000;
 const decoder = new TextDecoder();
 
 interface TenkiBaseOptions {
@@ -206,9 +208,12 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
               timeoutMs: runOptions.timeout,
               signal: runOptions.signal,
             });
-            const pump = async (stream: ReadableStream<Uint8Array>, name: "stdout" | "stderr") => {
+            const readers = [handle.stdout.getReader(), handle.stderr.getReader()] as const;
+            const pump = async (
+              reader: ReadableStreamDefaultReader<Uint8Array>,
+              name: "stdout" | "stderr",
+            ) => {
               const streamDecoder = new TextDecoder();
-              const reader = stream.getReader();
               for (;;) {
                 const { value, done } = await reader.read();
                 if (done) break;
@@ -221,13 +226,15 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
               }
             };
             const pumps = Promise.allSettled([
-              pump(handle.stdout, "stdout"),
-              pump(handle.stderr, "stderr"),
+              pump(readers[0], "stdout"),
+              pump(readers[1], "stderr"),
             ]);
             const completed = (async () => {
               try {
                 const result = await handle;
-                await pumps;
+                // A pipe inherited by a lingering child can stay open after exit; do not hang on it.
+                await Promise.race([pumps, sleep(OUTPUT_DRAIN_GRACE_MS)]);
+                for (const reader of readers) void reader.cancel().catch(() => undefined);
                 return { exitCode: result.exitCode };
               } finally {
                 if (state === "running") state = "exited";
@@ -235,6 +242,7 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
               }
             })();
             completed.catch(() => undefined);
+            let stdin: WritableStreamDefaultWriter<Uint8Array> | undefined;
             const id = String(await handle.pid);
 
             return {
@@ -251,14 +259,10 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
                 }
               },
               async write(value) {
-                const writer = handle.stdin.getWriter();
-                try {
-                  await writer.write(
-                    typeof value === "string" ? new TextEncoder().encode(value) : value,
-                  );
-                } finally {
-                  writer.releaseLock();
-                }
+                stdin ??= handle.stdin.getWriter();
+                await stdin.write(
+                  typeof value === "string" ? new TextEncoder().encode(value) : value,
+                );
               },
               wait: () => completed,
               async kill(signal = "SIGTERM") {
@@ -324,6 +328,14 @@ async function prepareWorkingDirectory(
   if (cwd === GUEST_HOME || cwd.startsWith(`${GUEST_HOME}/`)) {
     await raw.mkdir(cwd);
     return (path) => path;
+  }
+  if (cwd === "/") {
+    throw new SandboxError({
+      code: "invalid_input",
+      provider: "tenki",
+      operation: "sandbox.create",
+      message: `Tenki cannot use / as the working directory; pass a path such as /workspace or ${GUEST_HOME}/project`,
+    });
   }
   const mirror = `${GUEST_HOME}${cwd}`;
   const result = await raw.exec("sh", {
@@ -495,6 +507,10 @@ async function awaitCreation(
       },
     );
   });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function assertNotAborted(signal?: AbortSignal): void {
