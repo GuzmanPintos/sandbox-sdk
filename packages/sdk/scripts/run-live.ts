@@ -19,6 +19,8 @@ const missingCredentials = (() => {
       return !process.env.BOX_API_KEY;
     case "railway":
       return !process.env.RAILWAY_API_TOKEN || !process.env.RAILWAY_ENVIRONMENT_ID;
+    case "tenki":
+      return !process.env.TENKI_API_KEY && !process.env.TENKI_AUTH_TOKEN;
     case "vercel":
       return (
         !process.env.VERCEL_OIDC_TOKEN &&
@@ -28,10 +30,14 @@ const missingCredentials = (() => {
       return true;
   }
 })();
+const packageRoot = new URL("..", import.meta.url).pathname;
+// Bun's http2 client cannot stream Tenki command output, so that suite runs on Node against dist.
+const liveCommand =
+  id === "tenki" ? ["bun", "run", "test:live:tenki"] : ["bun", "test", `tests/live/${id}.test.ts`];
 const processResult = missingCredentials
   ? null
-  : Bun.spawn(["bun", "test", `tests/live/${id}.test.ts`], {
-      cwd: new URL("..", import.meta.url).pathname,
+  : Bun.spawn(liveCommand, {
+      cwd: packageRoot,
       stdout: "inherit",
       stderr: "inherit",
       env: process.env,
