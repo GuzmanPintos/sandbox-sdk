@@ -177,7 +177,7 @@ export const providers: readonly ProviderMetadata[] = [
   },
   {
     id: "tenki",
-    displayName: "Tenki Sandbox",
+    displayName: "Tenki",
     officialUrl: "https://tenki.cloud/docs/sandbox",
     packageName: "@tenkicloud/sandbox",
     packageVersion: "1.0.2",

@@ -1,6 +1,6 @@
 ## Unreleased
 
-- Add the Tenki Sandbox provider adapter with files, streamed processes with stdin, public
+- Add the Tenki provider adapter with files, streamed processes with stdin, public
   preview URLs, disk-plus-memory snapshots, pause/resume, package export, live-test entry point,
   and provider documentation.
 
