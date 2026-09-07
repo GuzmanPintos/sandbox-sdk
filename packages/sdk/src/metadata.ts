@@ -180,7 +180,7 @@ export const providers: readonly ProviderMetadata[] = [
     displayName: "Tenki",
     officialUrl: "https://tenki.cloud/docs/sandbox",
     packageName: "@tenkicloud/sandbox",
-    packageVersion: "1.0.2",
+    packageVersion: "1.0.6",
     capabilities: tenkiCapabilities,
     environmentVariables: ["TENKI_API_KEY", "TENKI_AUTH_TOKEN", "TENKI_API_ENDPOINT"],
     technicalStatus: "supported",

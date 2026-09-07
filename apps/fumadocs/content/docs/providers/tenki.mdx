@@ -87,7 +87,7 @@ The managed provider surface maps `stop()` to Tenki pause, `resume()` to resume,
 
 ## Runtime
 
-The Tenki SDK streams command output over gRPC on HTTP/2. Node.js 18 or newer is supported. Bun's HTTP/2 client currently fails these streams with `Premature close`, so run Tenki sandboxes from Node.js until that is fixed upstream.
+The Tenki SDK streams command output over gRPC on HTTP/2 and runs on Node.js 18 or newer and Bun 1.3 or newer. Use `@tenkicloud/sandbox` 1.0.6 or newer on Bun; earlier releases fail streamed output there with `Premature close`.
 
 ## Options
 

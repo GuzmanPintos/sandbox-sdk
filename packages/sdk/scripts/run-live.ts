@@ -31,12 +31,9 @@ const missingCredentials = (() => {
   }
 })();
 const packageRoot = new URL("..", import.meta.url).pathname;
-// Bun's http2 client cannot stream Tenki command output, so that suite runs on Node against dist.
-const liveCommand =
-  id === "tenki" ? ["bun", "run", "test:live:tenki"] : ["bun", "test", `tests/live/${id}.test.ts`];
 const processResult = missingCredentials
   ? null
-  : Bun.spawn(liveCommand, {
+  : Bun.spawn(["bun", "test", `tests/live/${id}.test.ts`], {
       cwd: packageRoot,
       stdout: "inherit",
       stderr: "inherit",
