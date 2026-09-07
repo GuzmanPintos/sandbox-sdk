@@ -61,7 +61,7 @@ for await (const event of process.output()) {
 }
 ```
 
-Tenki exposes the running process, so normalized `write()`, `kill()`, and separate stdout and stderr streams are all supported. `kill()` accepts signal names such as `SIGTERM` or `SIGKILL`.
+Tenki exposes the running process, so normalized `write()`, `kill()`, and separate stdout and stderr streams are all supported. `kill()` accepts signal names such as `SIGTERM` or `SIGKILL`. It delivers the signal and waits briefly for the process to exit so trailing output reaches `output()`. The signal is never escalated: a process that ignores `SIGTERM` keeps running, `status()` keeps reporting it, and `wait()` keeps waiting, so call `kill("SIGKILL")` when it must go.
 
 ## Expose a preview
 
