@@ -83,7 +83,7 @@ Snapshots capture disk and memory, so a restored session resumes with its proces
 
 ## Pause and resume
 
-The managed provider surface maps `stop()` to Tenki pause, `resume()` to resume, and `destroy()` to termination. A paused session keeps its files and memory while compute charges stop. Idle sessions pause automatically after `idleTimeoutMinutes` unless `sticky` is set.
+The managed provider surface maps `stop()` to Tenki pause, `resume()` to resume, and `destroy()` to termination. `stop()` resolves once the session reaches `PAUSED`, so a `resume()` right after it does not race the in-flight pause. A paused session keeps its files and memory while compute charges stop. Idle sessions pause automatically after `idleTimeoutMinutes` unless `sticky` is set.
 
 ## Runtime
 

@@ -243,7 +243,21 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
             })();
             completed.catch(() => undefined);
             let stdin: WritableStreamDefaultWriter<Uint8Array> | undefined;
-            const id = String(await handle.pid);
+            // A launch failure arrives as an exit frame with no `started` frame, so `pid` alone never settles.
+            const launched = await Promise.race([
+              handle.pid.then((pid) => ({ pid })),
+              Promise.resolve(handle).then((result) => ({ result })),
+            ]);
+            if (!("pid" in launched)) {
+              const detail = launchFailure(launched.result);
+              throw new SandboxError({
+                code: "process_failed",
+                provider: "tenki",
+                operation: "process.start",
+                message: `Process exited with code ${launched.result.exitCode} before it started${detail ? `: ${detail}` : ""}`,
+              });
+            }
+            const id = String(launched.pid);
 
             return {
               id,
@@ -306,7 +320,11 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
   };
 
   return withManagedSessions(provider, [], {
-    stop: (sandbox) => guard("managed.stop", () => sandbox.raw.pause()),
+    stop: (sandbox) =>
+      guard("managed.stop", async () => {
+        await sandbox.raw.pause();
+        await sandbox.raw.waitPaused();
+      }),
     resume: (sandbox) =>
       guard("managed.resume", async () => {
         await sandbox.raw.resume();
@@ -393,7 +411,7 @@ function toArgv(command: CommandInput): string[] {
 }
 
 /** The guest reports launch failures such as a missing cwd through `reason` with no stderr. */
-function launchFailure(result: ExecResult): string {
+function launchFailure(result: Pick<ExecResult, "exitCode" | "reason">): string {
   if (result.exitCode !== -1 || !result.reason) return "";
   return ["exit", "signaled", "timeout", "grace_timeout"].includes(result.reason)
     ? ""

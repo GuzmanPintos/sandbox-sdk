@@ -34,6 +34,7 @@ const closeIfOpen = mock(async () => undefined);
 const pause = mock(async () => undefined);
 const resume = mock(async () => undefined);
 const waitResumed = mock(async () => undefined);
+const waitPaused = mock(async () => undefined);
 const exposePort = mock(async (port: number) => ({
   port,
   previewUrl: `https://preview-${port}.us.sb.tenki.sh`,
@@ -78,6 +79,7 @@ class NativeSession {
   pause = pause;
   resume = resume;
   waitResumed = waitResumed;
+  waitPaused = waitPaused;
   exposePort = exposePort;
 
   async exec(command: string, options?: NativeExecOptions) {
@@ -113,12 +115,14 @@ class NativeSession {
       stdout: Uint8Array;
       stderr: Uint8Array;
       signal?: string;
+      reason?: string;
     }) => void;
     const done = new Promise<{
       exitCode: number;
       stdout: Uint8Array;
       stderr: Uint8Array;
       signal?: string;
+      reason?: string;
     }>((resolve) => (finish = resolve));
     let closeStdout!: () => void;
     let closeStderr!: () => void;
@@ -139,13 +143,20 @@ class NativeSession {
       },
     });
     let exited = false;
-    const exit = (exitCode: number, signal?: string) => {
+    const exit = (exitCode: number, signal?: string, reason?: string) => {
       if (exited) return;
       exited = true;
       closeStdout();
       closeStderr();
-      finish({ exitCode, stdout: new Uint8Array(), stderr: new Uint8Array(), signal });
+      finish({ exitCode, stdout: new Uint8Array(), stderr: new Uint8Array(), signal, reason });
     };
+    // The guest reports a failed launch as an exit with no `started` frame, so pid never settles.
+    const launchFails = argv.at(-1) === "nolaunch";
+    if (launchFails) {
+      queueMicrotask(() =>
+        exit(-1, undefined, "cwd /missing: stat /missing: no such file or directory"),
+      );
+    }
     const stdin = new WritableStream<Uint8Array>({
       write(chunk) {
         stdinChunks.push(chunk);
@@ -155,7 +166,7 @@ class NativeSession {
       },
     });
     return {
-      pid: Promise.resolve(4242),
+      pid: launchFails ? new Promise<number>(() => undefined) : Promise.resolve(4242),
       stdout,
       stderr,
       stdin,
@@ -454,6 +465,7 @@ test("Tenki managed sessions pause, resume, and terminate", async () => {
   const session = await provider.managed!.create({ sessionId: "tenki-managed" });
   await session.stop();
   expect(pause).toHaveBeenCalledTimes(1);
+  expect(waitPaused).toHaveBeenCalledTimes(1);
   await session.resume();
   expect(resume).toHaveBeenCalledTimes(1);
   expect(waitResumed).toHaveBeenCalledTimes(1);
@@ -486,6 +498,21 @@ test("Tenki adapter reports exit even when a process pipe never closes", async (
   expect(performance.now() - started).toBeLessThan(3_000);
   expect(await process.status()).toBe("killed");
   await sandbox.stop();
+});
+
+test("Tenki adapter fails start() when the guest exits without launching the process", async () => {
+  reset();
+  const { tenki } = await import("../../src/providers/tenki");
+  const sandbox = await createSandbox({ provider: tenki() });
+  const started = performance.now();
+  await expect(sandbox.processes.start({ command: "nolaunch" })).rejects.toMatchObject({
+    name: "SandboxError",
+    code: "process_failed",
+    operation: "process.start",
+    message:
+      "Process exited with code -1 before it started: cwd /missing: stat /missing: no such file or directory",
+  });
+  expect(performance.now() - started).toBeLessThan(3_000);
 });
 
 test("Tenki adapter rejects / as a working directory", async () => {
