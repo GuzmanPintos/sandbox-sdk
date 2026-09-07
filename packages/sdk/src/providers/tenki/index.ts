@@ -114,15 +114,27 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
           createOptions.timeout,
         ),
       );
-      let guestPath: (path: string) => string;
+      let mapPath: (path: string) => string;
       try {
-        guestPath = await guard("sandbox.create", () =>
+        mapPath = await guard("sandbox.create", () =>
           prepareWorkingDirectory(raw, createOptions.cwd),
         );
       } catch (error) {
         await raw.closeIfOpen().catch(() => undefined);
         throw error;
       }
+      const guestPath = (path: string, operation: string) => {
+        const mapped = mapPath(path);
+        if (mapped !== GUEST_HOME && !mapped.startsWith(`${GUEST_HOME}/`)) {
+          throw new SandboxError({
+            code: "invalid_input",
+            provider: "tenki",
+            operation,
+            message: `Tenki's file API cannot reach ${path}; use a path under ${createOptions.cwd} or ${GUEST_HOME}, or run a command instead`,
+          });
+        }
+        return mapped;
+      };
 
       return {
         id: raw.id,
@@ -131,32 +143,35 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
         files: {
           write: (path, value) =>
             guard("files.write", async () =>
-              raw.writeFile(guestPath(path), await toUint8Array(value)),
+              raw.writeFile(guestPath(path, "files.write"), await toUint8Array(value)),
             ),
-          read: (path) => guard("files.read", () => raw.readFile(guestPath(path))),
+          read: (path) => guard("files.read", () => raw.readFile(guestPath(path, "files.read"))),
           list: (path) =>
             guard("files.list", async () => {
               const parent = path.replace(/\/$/, "");
-              return (await raw.list(guestPath(path), { includeHidden: true })).map((entry) => {
-                const name = entry.path.split("/").pop() ?? entry.path;
-                return {
-                  name,
-                  path: `${parent}/${name}`,
-                  type: entry.isSymlink
-                    ? ("symlink" as const)
-                    : entry.isDir
-                      ? ("directory" as const)
-                      : ("file" as const),
-                  size: entry.isDir ? undefined : Number(entry.size),
-                };
-              });
+              return (await raw.list(guestPath(path, "files.list"), { includeHidden: true })).map(
+                (entry) => {
+                  const name = entry.path.split("/").pop() ?? entry.path;
+                  return {
+                    name,
+                    path: `${parent}/${name}`,
+                    type: entry.isSymlink
+                      ? ("symlink" as const)
+                      : entry.isDir
+                        ? ("directory" as const)
+                        : ("file" as const),
+                    size: entry.isDir ? undefined : Number(entry.size),
+                  };
+                },
+              );
             }),
-          mkdir: (path) => guard("files.mkdir", () => raw.mkdir(guestPath(path))),
-          remove: (path) => guard("files.remove", () => raw.remove(guestPath(path))),
+          mkdir: (path) => guard("files.mkdir", () => raw.mkdir(guestPath(path, "files.mkdir"))),
+          remove: (path) =>
+            guard("files.remove", () => raw.remove(guestPath(path, "files.remove"))),
           exists: (path) =>
             guard("files.exists", async () => {
               try {
-                await raw.stat(guestPath(path));
+                await raw.stat(guestPath(path, "files.exists"));
                 return true;
               } catch (error) {
                 if (error instanceof Error && error.name === "FileNotFoundError") return false;
@@ -198,6 +213,7 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
             const events: ProcessOutputEvent[] = [];
             const waiters = new Set<() => void>();
             let state: "running" | "exited" | "killed" = "running";
+            let killRequested = false;
             const wake = () => {
               for (const waiter of waiters) waiter();
               waiters.clear();
@@ -237,11 +253,14 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
                 for (const reader of readers) void reader.cancel().catch(() => undefined);
                 return { exitCode: result.exitCode };
               } finally {
-                if (state === "running") state = "exited";
+                if (state === "running") state = killRequested ? "killed" : "exited";
                 wake();
               }
             })();
-            completed.catch(() => undefined);
+            const settled = completed.then(
+              () => undefined,
+              () => undefined,
+            );
             let stdin: WritableStreamDefaultWriter<Uint8Array> | undefined;
             // A launch failure arrives as an exit frame with no `started` frame, so `pid` alone never settles.
             const launched = await Promise.race([
@@ -280,9 +299,10 @@ export function tenki(options: TenkiOptions = {}): SandboxProvider<TenkiSession>
               },
               wait: () => completed,
               async kill(signal = "SIGTERM") {
+                killRequested = true;
                 await handle.signal(signal);
-                state = "killed";
-                wake();
+                // Let the exit and drain path finish so an active output() iterator sees the trailing frames.
+                await Promise.race([settled, sleep(2 * OUTPUT_DRAIN_GRACE_MS)]);
               },
             } satisfies SandboxProcess;
           }),
