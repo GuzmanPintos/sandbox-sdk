@@ -48,6 +48,8 @@ Tenki's file API only reaches `/home/tenki`, while commands can run anywhere. Wh
 
 Pass `cwd: "/home/tenki/project"` to skip the symlink entirely. The mapping needs passwordless `sudo` in the guest, which the Tenki base image provides.
 
+File operations accept paths under the sandbox `cwd` or `/home/tenki`. Other absolute paths such as `/tmp/result` are rejected with `invalid_input` because the guest file API cannot reach them; use `run()` for files elsewhere in the guest.
+
 ## Stream a process
 
 ```ts title="process.ts"

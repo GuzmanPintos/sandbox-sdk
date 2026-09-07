@@ -174,6 +174,13 @@ class NativeSession {
       then: done.then.bind(done),
       signal: async (signal: string) => {
         signals.push(signal);
+        if (argv.at(-1) === "trail") {
+          setTimeout(() => {
+            emitStdout(encoder.encode("trailing\n"));
+            exit(-1, "terminated");
+          }, 20);
+          return;
+        }
         exit(-1, "terminated");
       },
       kill: async () => {
@@ -513,6 +520,40 @@ test("Tenki adapter fails start() when the guest exits without launching the pro
       "Process exited with code -1 before it started: cwd /missing: stat /missing: no such file or directory",
   });
   expect(performance.now() - started).toBeLessThan(3_000);
+});
+
+test("Tenki adapter keeps output() open for frames that arrive after kill()", async () => {
+  reset();
+  const { tenki } = await import("../../src/providers/tenki");
+  const sandbox = await createSandbox({ provider: tenki() });
+  const process = await sandbox.processes.start({ command: "trail" });
+  const collected: string[] = [];
+  const consumer = (async () => {
+    for await (const event of process.output()) collected.push(String(event.data));
+  })();
+  await process.kill();
+  await consumer;
+  expect(collected).toContain("trailing\n");
+  expect(await process.status()).toBe("killed");
+  expect(await process.wait()).toEqual({ exitCode: -1 });
+});
+
+test("Tenki adapter rejects file paths the guest file API cannot reach", async () => {
+  reset();
+  const { tenki } = await import("../../src/providers/tenki");
+  const sandbox = await createSandbox({ provider: tenki() });
+  await expect(sandbox.files.write("/tmp/result", "x")).rejects.toMatchObject({
+    code: "invalid_input",
+    provider: "tenki",
+    operation: "files.write",
+    message: expect.stringContaining("/tmp/result"),
+  });
+  await expect(sandbox.files.exists("/etc/hostname")).rejects.toMatchObject({
+    code: "invalid_input",
+    operation: "files.exists",
+  });
+  await sandbox.files.write("/home/tenki/shared.txt", "ok");
+  expect(await sandbox.files.text("/home/tenki/shared.txt")).toBe("ok");
 });
 
 test("Tenki adapter rejects / as a working directory", async () => {

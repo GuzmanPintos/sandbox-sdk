@@ -192,7 +192,7 @@ export const providers: readonly ProviderMetadata[] = [
     snapshotBehavior:
       "Creates and deletes VM snapshots that capture disk and memory. Restoring boots a new session through tenki({ snapshotId }).",
     runtimeLimitations:
-      "Requires Node.js; Bun's http2 client cannot stream command output from the Tenki data plane. The file API is rooted at /home/tenki, so other working directories are symlinked into it.",
+      "Runs on Node.js 18 or newer and Bun 1.3 or newer with @tenkicloud/sandbox 1.0.6 or newer. The file API is rooted at /home/tenki: other working directories are symlinked into it, and file paths outside the cwd or /home/tenki are rejected.",
   },
 ];
 
